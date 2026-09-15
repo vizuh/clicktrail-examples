@@ -1,46 +1,40 @@
 'use client';
 
 import { useEffect } from 'react';
-import { extractClickIds, serializeClickIdsCookie } from '../lib/click-id-tracker.ts';
+import {
+  extractAttribution,
+  mergeFirstTouch,
+  parseClickIdsCookie,
+  serializeClickIdsCookie,
+} from '../lib/click-id-tracker.ts';
 
-/**
- * Client-side component to place in Next.js App Router RootLayout.
- * On initial page load, inspects URL query parameters for gclid, gbraid, wbraid.
- * If detected, sets a 90-day first-party cookie.
- */
-export function LeadCaptureScript() {
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const searchParams = new URLSearchParams(window.location.search);
-    const clickIds = extractClickIds(searchParams);
-
-    if (clickIds) {
-      const { name, value, options } = serializeClickIdsCookie(clickIds);
-      
-      let cookieStr = `${name}=${value}; Max-Age=${options.maxAge}; Path=${options.path}; SameSite=${options.sameSite}`;
-      if (options.secure && window.location.protocol === 'https:') {
-        cookieStr += '; Secure';
-      }
-      if (options.domain) {
-        cookieStr += `; Domain=${options.domain}`;
-      }
-
-      document.cookie = cookieStr;
-      // Optional: Fire dataLayer event or custom event for GTM
-      window.dataLayer = window.dataLayer || [];
-      window.dataLayer.push({
-        event: 'clicktrail_click_ids_captured',
-        click_ids: clickIds,
-      });
-    }
-  }, []);
-
-  return null;
+export interface LeadCaptureScriptProps {
+  /** Derived from the host CMP. Defaults to fail-closed. */
+  advertisingConsent?: boolean;
 }
 
-declare global {
-  interface Window {
-    dataLayer?: any[];
-  }
+/**
+ * Optional client fallback for a first-party attribution cookie.
+ * Prefer setting the cookie in a server response or middleware when possible.
+ * This component never writes advertising identifiers without affirmative consent,
+ * never pushes them to a data layer, and never overwrites first touch.
+ */
+export function LeadCaptureScript({ advertisingConsent = false }: LeadCaptureScriptProps) {
+  useEffect(() => {
+    if (!advertisingConsent || typeof window === 'undefined') return;
+    const incoming = extractAttribution(new URL(window.location.href));
+    if (!incoming) return;
+
+    const existing = parseClickIdsCookie(document.cookie);
+    const merged = mergeFirstTouch(existing, incoming);
+    if (existing && Object.keys(existing).length > 0) return;
+
+    const { name, value, options } = serializeClickIdsCookie(merged);
+    let cookie = `${name}=${value}; Max-Age=${options.maxAge}; Path=${options.path}; SameSite=${options.sameSite}`;
+    if (options.secure && window.location.protocol === 'https:') cookie += '; Secure';
+    if (options.domain) cookie += `; Domain=${options.domain}`;
+    document.cookie = cookie;
+  }, [advertisingConsent]);
+
+  return null;
 }

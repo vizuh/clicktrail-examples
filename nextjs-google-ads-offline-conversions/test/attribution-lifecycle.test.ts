@@ -1,100 +1,195 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CLICK_IDS_COOKIE_NAME,
+  extractAttribution,
   extractClickIds,
-  serializeClickIdsCookie,
+  mergeFirstTouch,
   parseClickIdsCookie,
-  CLICK_IDS_COOKIE_NAME
+  serializeClickIdsCookie,
 } from '../src/lib/click-id-tracker.ts';
+import { buildGoogleAdsClickConversion, createUploadRequest } from '../src/lib/google-ads-client.ts';
 import { hashEmail, hashPhone } from '../src/lib/hash.ts';
 import { submitLeadAction } from '../src/app/actions/submit-lead.ts';
+import type { ConsentSnapshot, LeadFormData } from '../src/types.ts';
 
-test('End-to-End Attribution Lifecycle: URL click IDs -> Cookie -> Server Action -> Google Ads Payload', async (t) => {
-  // Step 1: Simulate user landing from Google Ads with GCLID
-  const sampleGclid = 'CjwKCAjw_pX7BRAkEiwA5SbSOc_mock_google_click_id_987';
-  const incomingUrl = new URL(`https://example.com/demo?gclid=${sampleGclid}&utm_source=google&utm_medium=cpc`);
-  
-  const extractedIds = extractClickIds(incomingUrl.searchParams);
-  assert.ok(extractedIds, 'Click IDs should be successfully extracted from URL');
-  assert.equal(extractedIds.gclid, sampleGclid, 'GCLID should match incoming URL param');
+const granted: ConsentSnapshot = {
+  advertising: 'GRANTED',
+  adUserData: 'GRANTED',
+  adPersonalization: 'GRANTED',
+  source: 'synthetic-cmp',
+  policyVersion: 'test-v1',
+};
 
-  // Step 2: Simulate client-side cookie persistence (90 days)
-  const cookieData = serializeClickIdsCookie(extractedIds);
-  assert.equal(cookieData.name, CLICK_IDS_COOKIE_NAME);
-  assert.ok(cookieData.value, 'Cookie value must be encoded string');
-  assert.equal(cookieData.options.maxAge, 90 * 24 * 60 * 60, 'Max-Age must default to 90 days');
-  assert.equal(cookieData.options.sameSite, 'Lax');
+const lead: LeadFormData = {
+  fullName: 'Synthetic User',
+  email: 'person@example.test',
+  phone: '+15550192834',
+  value: 150,
+  currency: 'USD',
+};
 
-  // Step 3: Simulate browser sending cookie header in HTTP request
-  const simulatedCookieHeader = `${cookieData.name}=${cookieData.value}; other_cookie=xyz`;
-  const parsedFromHeader = parseClickIdsCookie(simulatedCookieHeader);
-  assert.ok(parsedFromHeader, 'Server should parse click IDs from Cookie header');
-  assert.equal(parsedFromHeader.gclid, sampleGclid);
+test('allowlisted attribution survives URL → first-touch cookie → server builder', () => {
+  const sampleGclid = 'synthetic-gclid-987';
+  const attribution = extractAttribution(
+    `https://example.test/demo?gclid=${sampleGclid}&utm_source=google&utm_medium=cpc&utm_campaign=demo&ignored=drop`,
+    '2026-09-15T10:00:00.000Z',
+  );
+  assert.ok(attribution);
+  if (!attribution) throw new Error('synthetic attribution should be present');
+  assert.equal(attribution.gclid, sampleGclid);
+  assert.equal(attribution.utmSource, 'google');
+  assert.equal(attribution.landingPage, 'https://example.test/demo');
+  assert.equal((attribution as Record<string, unknown>).ignored, undefined);
 
-  // Step 4: Lead submits contact form -> Server Action execution
-  const leadData = {
-    fullName: 'Grace Hopper',
-    email: 'grace.hopper@example.com',
-    phone: '+1 (555) 019-2834',
-    company: 'US Navy Comp',
-    value: 150.0,
-    currency: 'USD',
-  };
+  const cookie = serializeClickIdsCookie(attribution);
+  assert.equal(cookie.name, CLICK_IDS_COOKIE_NAME);
+  assert.equal(cookie.options.maxAge, 90 * 24 * 60 * 60);
+  assert.equal(cookie.options.sameSite, 'Lax');
 
-  const actionResult = await submitLeadAction(leadData, {
-    cookieHeader: simulatedCookieHeader,
+  const parsed = parseClickIdsCookie(`${cookie.name}=${cookie.value}; other_cookie=xyz`);
+  assert.deepEqual(parsed, attribution);
+
+  const conversion = buildGoogleAdsClickConversion({
+    customerId: '123-456-7890',
+    conversionActionId: '9876543210',
+    lead,
+    clickIds: parsed,
+    conversionDateTime: '2026-09-15 10:30:00+00:00',
+    orderId: 'lead-synthetic-001',
+    consent: granted,
   });
-
-  // Step 5: Verify the offline conversion payload conforms to Google Ads API requirements
-  assert.ok(actionResult.success, 'Server action should succeed');
-  assert.ok(actionResult.conversionPayload, 'Conversion payload must be generated');
-
-  const uploadRequest = actionResult.conversionPayload;
-  assert.ok(uploadRequest.conversions.length === 1, 'Should contain 1 conversion');
-  
-  const conversion = uploadRequest.conversions[0];
-  // Verify GCLID survived all the way to the conversion payload
-  assert.equal(conversion.gclid, sampleGclid, 'GCLID must survive intact to the Google Ads upload payload');
-  assert.equal(conversion.conversionValue, 150.0);
+  assert.equal(conversion.gclid, sampleGclid);
+  assert.equal(conversion.conversionValue, 150);
   assert.equal(conversion.currencyCode, 'USD');
+  assert.equal(conversion.orderId, 'lead-synthetic-001');
+  assert.equal(conversion.userIdentifiers?.[0]?.hashedEmail, hashEmail(lead.email));
+  assert.equal(conversion.userIdentifiers?.[1]?.hashedPhoneNumber, hashPhone(lead.phone!));
+  assert.deepEqual(conversion.consent, { adUserData: 'GRANTED', adPersonalization: 'GRANTED' });
 
-  // Verify Enhanced Conversions user identifiers
-  assert.ok(conversion.userIdentifiers && conversion.userIdentifiers.length >= 1);
-  const expectedHashedEmail = hashEmail('grace.hopper@example.com');
-  const expectedHashedPhone = hashPhone('+1 (555) 019-2834');
-  
-  assert.equal(conversion.userIdentifiers[0].hashedEmail, expectedHashedEmail);
-  assert.equal(conversion.userIdentifiers[1].hashedPhoneNumber, expectedHashedPhone);
+  const request = createUploadRequest('123-456-7890', [conversion]);
+  assert.equal(request.customerId, '1234567890');
+  assert.equal(request.validateOnly, true);
+  assert.equal(request.partialFailure, true);
+});
 
-  // Verify Google Ads DateTime format: yyyy-mm-dd hh:mm:ss+|-hh:mm
-  const dateRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/;
-  assert.match(conversion.conversionDateTime, dateRegex, 'DateTime must match Google Ads specification');
+test('no click or UTM signal produces no attribution record', () => {
+  assert.equal(extractAttribution('https://example.test/demo'), null);
+  assert.equal(extractClickIds(new URLSearchParams({ utm_source: 'google' })), null);
+  assert.throws(() => serializeClickIdsCookie({ gclid: 'x'.repeat(512), utmCampaign: 'y'.repeat(512), utmContent: 'z'.repeat(512), utmMedium: 'm'.repeat(512), utmSource: 's'.repeat(512), utmTerm: 't'.repeat(512) }), /bounded size/);
+});
 
-  // Verify Consent Mode flags
-  assert.deepEqual(conversion.consent, {
-    adUserData: 'GRANTED',
-    adPersonalization: 'GRANTED',
+test('first touch is not overwritten by a later landing', () => {
+  const first = extractAttribution('https://example.test/?gclid=first&utm_campaign=first', '2026-09-15T10:00:00.000Z')!;
+  const later = extractAttribution('https://example.test/?gclid=later&utm_campaign=later', '2026-09-16T10:00:00.000Z')!;
+  assert.deepEqual(mergeFirstTouch(first, later), first);
+  assert.deepEqual(mergeFirstTouch(null, later), later);
+});
+
+test('GBRAID and WBRAID remain supported when GCLID is absent', () => {
+  for (const [key, value] of [['gbraid', 'synthetic-gbraid-123'], ['wbraid', 'synthetic-wbraid-123']] as const) {
+    const attribution = extractAttribution(new URLSearchParams({ [key]: value }), '2026-09-15T10:00:00.000Z')!;
+    const conversion = buildGoogleAdsClickConversion({
+      customerId: '1234567890',
+      conversionActionId: '9876543210',
+      lead: { email: '' },
+      clickIds: attribution,
+      conversionDateTime: new Date('2026-09-15T10:30:00Z'),
+      orderId: `lead-${key}`,
+      consent: granted,
+    });
+    assert.equal(conversion[key], value);
+    assert.equal(conversion.gclid, undefined);
+    assert.equal(conversion.userIdentifiers, undefined);
+  }
+});
+
+test('server action hands a candidate to the host outbox without returning it', async () => {
+  let queued: unknown;
+  const cookie = serializeClickIdsCookie({ gclid: 'synthetic-gclid', capturedAt: '2026-09-15T10:00:00.000Z' });
+  const result = await submitLeadAction(lead, {
+    cookieHeader: `${cookie.name}=${cookie.value}`,
+    consent: granted,
+    customerId: '1234567890',
+    conversionActionId: '9876543210',
+    orderId: 'lead-queued',
+    conversionDateTime: '2026-09-15 10:30:00+00:00',
+    enqueueConversion: async request => { queued = request; },
+  });
+  assert.deepEqual(result, { success: true, leadId: 'lead-queued', conversionPrepared: true });
+  assert.ok(queued);
+  assert.equal('conversionPayload' in result, false);
+  assert.equal((queued as { conversions: Array<{ gclid?: string }> }).conversions[0].gclid, 'synthetic-gclid');
+});
+
+test('capture and enhanced identifiers fail closed without consent', async () => {
+  const denied: ConsentSnapshot = { ...granted, advertising: 'DENIED', adUserData: 'DENIED' };
+  assert.throws(() => buildGoogleAdsClickConversion({
+    customerId: '1234567890',
+    conversionActionId: '9876543210',
+    lead,
+    clickIds: { gclid: 'synthetic-gclid' },
+    conversionDateTime: '2026-09-15 10:30:00+00:00',
+    orderId: 'lead-denied',
+    consent: denied,
+  }), /consented click ID|permitted user identifier/);
+
+  const result = await submitLeadAction(lead, {
+    cookieHeader: 'ct_attribution=not-used',
+    consent: denied,
+    customerId: '1234567890',
+    conversionActionId: '9876543210',
+    orderId: 'lead-denied',
+  });
+  assert.deepEqual(result, {
+    success: true,
+    leadId: 'lead-denied',
+    conversionPrepared: false,
+    suppressionReason: 'consent',
   });
 });
 
-test('iOS 14.5+ Attribution: GBRAID and WBRAID survival when GCLID is absent', async () => {
-  const wbraidValue = 'CjgKCAjw_wbraid_sample_ios_web_conversion_123';
-  const urlParams = new URLSearchParams({ wbraid: wbraidValue });
-  
-  const extracted = extractClickIds(urlParams);
-  assert.ok(extracted);
-  assert.equal(extracted.wbraid, wbraidValue);
+test('unknown consent and missing configuration never get promoted to defaults', async () => {
+  const unknown: ConsentSnapshot = { ...granted, advertising: 'UNKNOWN' };
+  assert.throws(() => buildGoogleAdsClickConversion({
+    customerId: '1234567890',
+    conversionActionId: '9876543210',
+    lead,
+    clickIds: { gclid: 'synthetic-gclid' },
+    conversionDateTime: '2026-09-15 10:30:00+00:00',
+    orderId: 'lead-unknown',
+    consent: unknown,
+  }), /explicit consent/);
 
-  const cookie = serializeClickIdsCookie(extracted);
-  const cookieHeader = `${cookie.name}=${cookie.value}`;
+  const result = await submitLeadAction(lead);
+  assert.deepEqual(result, { success: true, conversionPrepared: false, suppressionReason: 'configuration' });
+  assert.throws(() => createUploadRequest('', []), /customerId/);
+});
 
-  const result = await submitLeadAction(
-    { fullName: 'Alan Turing', email: 'alan@bletchley.org', value: 200 },
-    { cookieHeader }
-  );
+test('conversion values are optional but cannot be invented or half-specified', () => {
+  const conversion = buildGoogleAdsClickConversion({
+    customerId: '1234567890',
+    conversionActionId: '9876543210',
+    lead: { email: '' },
+    clickIds: { gclid: 'synthetic-gclid' },
+    conversionDateTime: '2026-09-15 10:30:00+00:00',
+    orderId: 'lead-no-value',
+    consent: granted,
+  });
+  assert.equal(conversion.conversionValue, undefined);
+  assert.equal(conversion.currencyCode, undefined);
+  assert.throws(() => buildGoogleAdsClickConversion({
+    customerId: '1234567890',
+    conversionActionId: '9876543210',
+    lead: { email: '', value: 10 },
+    clickIds: { gclid: 'synthetic-gclid' },
+    conversionDateTime: '2026-09-15 10:30:00+00:00',
+    orderId: 'lead-no-currency',
+    consent: granted,
+  }), /currency/);
+});
 
-  assert.ok(result.success);
-  const conversion = result.conversionPayload!.conversions[0];
-  assert.equal(conversion.wbraid, wbraidValue, 'WBRAID should be present in Google Ads payload');
-  assert.equal(conversion.gclid, undefined, 'GCLID should be undefined');
+test('hashing uses documented normalization and does not guess phone country', () => {
+  assert.equal(hashEmail(' Ada.Lovelace+demo@Gmail.com '), hashEmail('adalovelace@gmail.com'));
+  assert.throws(() => hashPhone('(555) 019-2834'), /E\.164/);
 });

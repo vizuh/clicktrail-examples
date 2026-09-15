@@ -1,139 +1,139 @@
-# Google Ads Offline Conversion Tracking in Next.js App Router (GCLID, GBRAID, WBRAID)
+# Consent-aware attribution boundary in Next.js (GCLID, GBRAID, WBRAID)
 
-> Production-ready reference implementation demonstrating how to capture Google Ads click parameters (`gclid`, `gbraid`, `wbraid`), persist them across multi-page user sessions using first-party cookies, and generate privacy-compliant Google Ads Offline Conversion Upload payloads using Next.js Server Actions.
+> **Synthetic reference only.** This example demonstrates an opt-in, bounded
+> first-touch handoff from a Next.js landing page to a server-owned conversion
+> queue. It does not call Google, create a lead, store PII, or prove provider
+> delivery. Review the host application's consent, retention, identity, and
+> provider requirements before adapting it.
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
 [![Next.js](https://img.shields.io/badge/Next.js-App%20Router-black.svg)](https://nextjs.org/)
-[![Google Ads API](https://img.shields.io/badge/Google%20Ads%20API-v17-green.svg)](https://developers.google.com/google-ads/api/docs/conversions/upload-clicks)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
----
+## What this example covers
 
-## High-Intent Problem Statement
+- capture of `gclid`, `gbraid`, `wbraid`, and allowlisted `utm_*` parameters;
+- first-party cookie serialization with bounded values and first-touch retention;
+- an explicit consent gate that fails closed for unknown or denied advertising consent;
+- server-side validation of a stable host-owned lead/order reference;
+- an offline-conversion candidate for an **already verified, eligible** Google Ads API
+  path, without a network client;
+- tests using synthetic values only.
 
-When running paid acquisition via Google Ads, sending conversion signals exclusively via client-side JavaScript tags (Google Tag / GTM) leads to **20%–45% conversion signal loss** due to:
-1. **Ad Blockers & Brave Shields**: Client-side conversion endpoints (`googleadservices.com`) are routinely blocked.
-2. **Safari ITP & iOS 14.5+ ATT restrictions**: Cookies set via JavaScript document writes expire prematurely or are stripped.
-3. **GBRAID / WBRAID Fragmentation**: iOS privacy parameters replace standard `gclid` for app-to-web and web-to-app journeys.
-4. **Deferred Lead Cycles**: B2B leads, scheduled calls, and purchases often happen hours or days after the initial ad click.
+The implementation deliberately does **not** implement Google Data Manager. New or
+restricted Google Ads setups need a separately verified Data Manager contract. Do not
+reuse the Ads API request shape for that path.
 
-This reference pattern implements **ClickTrail Server-Side Google Ads Offline Conversion Tracking** natively inside a Next.js App Router architecture.
+## Evidence boundary
 
----
+| Evidence | What it proves | What it does not prove |
+| --- | --- | --- |
+| Unit tests in `test/` | Allowlist, bounds, first-touch, consent, and payload-shape behaviour | Google acceptance, CRM storage, or campaign attribution |
+| A server queue entry | The host accepted a conversion candidate | Provider processing or reporting |
+| Google Ads diagnostics/reconciliation | Provider-side receipt and outcome | That browser capture or a local test was correct |
 
-## Architectural Flow
+No local command in this example calls Google, a CRM, GTM, or an ad platform.
 
-```
-+-------------------------------------------------------------------------------+
-| 1. User Clicks Google Ad (?gclid=... or ?gbraid=... or ?wbraid=...)          |
-+---------------------------------------+---------------------------------------+
-                                        |
-                                        v
-+-------------------------------------------------------------------------------+
-| 2. Next.js Client Ingestion (LeadCaptureScript / RootLayout)                  |
-|    - Parses URLSearchParams for gclid, gbraid, wbraid                         |
-|    - Serializes into 90-day First-Party Cookie ('ct_google_click_ids')        |
-|    - Sets SameSite=Lax, Secure flags                                          |
-+---------------------------------------+---------------------------------------+
-                                        | (User navigates site, fills lead form)
-                                        v
-+-------------------------------------------------------------------------------+
-| 3. Lead Form Submission (Next.js Server Action: submitLeadAction)             |
-|    - Receives FormData on the Node server runtime                             |
-|    - Reads incoming HTTP Cookie header (`ct_google_click_ids`)                |
-|    - Validates lead payload (email, phone, name)                              |
-+---------------------------------------+---------------------------------------+
-                                        |
-                                        v
-+-------------------------------------------------------------------------------+
-| 4. Enhanced Conversion Normalization & Hash Generation                        |
-|    - Email: lowercase, trimmed, SHA-256 hashed                                |
-|    - Phone: E.164 standard (+1XXXXXXXXXX), SHA-256 hashed                     |
-|    - Click ID Selection: GCLID -> WBRAID -> GBRAID precedence                 |
-+---------------------------------------+---------------------------------------+
-                                        |
-                                        v
-+-------------------------------------------------------------------------------+
-| 5. Google Ads Conversion Upload API Payload Delivery                          |
-|    - Target: customers/{customer_id}:uploadClickConversions                   |
-|    - Google format datetime: yyyy-mm-dd hh:mm:ss+|-hh:mm                      |
-|    - Includes Consent Mode v2 flags (ad_user_data, ad_personalization)        |
-+-------------------------------------------------------------------------------+
+## Architecture
+
+```text
+Landing URL (?gclid=...&utm_*)
+        |
+        v
+Host CMP ---- affirmative advertising consent? ---- no --> no identifier persistence
+        |
+       yes
+        v
+Bounded first-touch cookie (optional client fallback; server response preferred)
+        |
+        v
+Host server accepts lead and resolves its internal lead/order ID
+        |
+        v
+Consent + configuration + attribution are validated
+        |
+        v
+Server-owned queue candidate (no browser payload, no provider call here)
 ```
 
----
+ClickTrail is an optional capture/normalization boundary. The host application owns:
 
-## Google Click Identifier Guide: GCLID vs GBRAID vs WBRAID
+- the CMP and consent records;
+- lead creation, authentication, retention, deletion, and access control;
+- CRM and database IDs;
+- conversion-stage and revenue truth;
+- Google Ads/Data Manager credentials and request contracts;
+- retries, idempotency, reconciliation, and provider diagnostics.
 
-| Parameter | Platform | Use Case | Offline Upload Field |
-|---|---|---|---|
-| `gclid` | Desktop, Android, iOS Safari (standard) | Standard web click identifier with full 1:1 attribution | `gclid` |
-| `gbraid` | iOS 14.5+ (App-to-Web) | Aggregated measurement for campaigns directing users from Google iOS apps | `gbraid` |
-| `wbraid` | iOS 14.5+ (Web-to-App / Web) | Aggregated measurement protecting user privacy via Private Click Measurement | `wbraid` |
+Browser-supplied values are untrusted and spoofable. Do not use them for authorization,
+pricing, eligibility, or fraud decisions. Do not put email, phone, cookies, tokens, raw
+requests, or arbitrary JSON in a data-layer event.
 
-> **Google Ads Rule:** A single conversion upload entry may only contain **one** click identifier (`gclid`, `gbraid`, OR `wbraid`). This package automatically handles precedence ranking.
+## No-package fallback
 
----
+A host does not need ClickTrail to use this boundary. Keep the same contract in the
+host's existing middleware or cookie utility: allowlist the five UTM keys and three click
+IDs, bound every value, gate persistence on affirmative CMP consent, preserve first touch,
+and attach the result to a server-owned lead ID. If the host cannot meet those conditions,
+do not persist the identifiers. Do not add a package merely to create a cookie.
 
-## Project Structure
+## Parameters
 
-```
+The parser accepts only these query keys:
+
+- `gclid`, `gbraid`, `wbraid`;
+- `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`.
+
+Values are trimmed and bounded to 512 characters, and the encoded cookie is bounded to 2,048 characters. The sample retains the first non-empty
+record and does not replace it with a later visit. The 90-day cookie lifetime is an
+example policy, not a Google or ClickTrail default that a host must adopt. A host may use
+session-only storage or a shorter policy.
+
+The conversion builder requires:
+
+- server-only customer and conversion-action IDs;
+- a server-owned stable `orderId`/lead reference;
+- an actual conversion timestamp;
+- explicit `advertising`, `adUserData`, and `adPersonalization` consent states;
+- one permitted click ID or a permitted enhanced-conversion identifier;
+- a value and ISO-4217 currency together, or neither.
+
+Unknown consent is never upgraded to granted. Hashed identifiers are created only in the
+server helper and are not returned in the action result. The example requires an E.164
+phone number with a country code and does not guess a country.
+
+## Files
+
+```text
 nextjs-google-ads-offline-conversions/
 ├── src/
-│   ├── app/
-│   │   └── actions/
-│   │       └── submit-lead.ts          # Server Action: extracts cookie & builds conversion
+│   ├── app/actions/submit-lead.ts   # host handoff; no lead/provider mutation
 │   ├── components/
-│   │   ├── LeadCaptureScript.tsx       # Client component: extracts URL params to cookie
-│   │   └── LeadForm.tsx                # Client component: React form with Server Action
+│   │   ├── LeadCaptureScript.tsx    # consent-gated optional client fallback
+│   │   └── LeadForm.tsx             # illustrative UI; host must wrap the action
 │   ├── lib/
-│   │   ├── click-id-tracker.ts         # URL parser, cookie serializer/deserializer
-│   │   ├── google-ads-client.ts        # Google Ads API v17 conversion payload builder
-│   │   └── hash.ts                     # SHA-256 normalizer (Google Enhanced Conversions)
-│   └── types.ts                        # TypeScript contracts
-├── test/
-│   └── attribution-lifecycle.test.ts   # E2E unit tests for parameter survival
-├── package.json
-├── tsconfig.json
-└── README.md
+│   │   ├── click-id-tracker.ts      # allowlist, bounds, cookie, first touch
+│   │   ├── google-ads-client.ts     # no-network eligible Ads API shape builder
+│   │   └── hash.ts                  # server-only normalization and SHA-256
+│   └── types.ts
+└── test/attribution-lifecycle.test.ts
 ```
 
----
+## Usage in a host Next.js App Router project
 
-## Quick Start & Verification
-
-### Prerequisites
-- Node.js >= 20 (Node.js 22/24 recommended)
-- npm or pnpm
-
-### Run Tests
-```bash
-npm test
-```
-
-Expected output:
-```
-✔ End-to-End Attribution Lifecycle: URL click IDs -> Cookie -> Server Action -> Google Ads Payload (35ms)
-✔ iOS 14.5+ Attribution: GBRAID and WBRAID survival when GCLID is absent (1ms)
-ℹ tests 2
-ℹ pass 2
-```
-
----
-
-## Usage in Next.js App Router
-
-### 1. Register Client Capture in `app/layout.tsx`
+### 1. Resolve consent before rendering capture
 
 ```tsx
-// app/layout.tsx
+// app/layout.tsx (illustrative)
 import { LeadCaptureScript } from '@/components/LeadCaptureScript';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Read the host CMP state. Do not hard-code true.
+  const advertisingConsent = false; // replace with the host's server/CMP bridge
   return (
     <html lang="en">
       <body>
-        <LeadCaptureScript />
+        <LeadCaptureScript advertisingConsent={advertisingConsent} />
         {children}
       </body>
     </html>
@@ -141,80 +141,62 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 }
 ```
 
-### 2. Add Lead Form in `app/page.tsx`
+The component does not send a GTM event. If the host needs analytics, it should use its
+existing GTM/data-layer contract and apply the same consent gate.
 
-```tsx
-// app/page.tsx
-import { LeadForm } from '@/components/LeadForm';
+### 2. Wrap the handoff in a real server action
 
-export default function Page() {
-  return (
-    <main className="container mx-auto py-12">
-      <h1 className="text-3xl font-bold text-center mb-8">Get in Touch</h1>
-      <LeadForm />
-    </main>
-  );
-}
-```
-
-### 3. Server Action (`app/actions/submit-lead.ts`)
-
-```typescript
+```ts
+// app/actions/handle-lead.ts (illustrative)
 import { cookies } from 'next/headers';
 import { submitLeadAction } from '@/app/actions/submit-lead';
 
 export async function handleLeadSubmit(formData: FormData) {
   'use server';
   const cookieStore = await cookies();
-  return await submitLeadAction(formData, { cookiesStore: cookieStore });
+  const lead = await createLeadInHostDatabase(formData); // host-owned transaction
+  const consent = await readConsentForLead(lead.id);     // never trust a hidden field
+  const occurredAt = await readLeadOccurredAt(lead.id);  // host event time
+
+  return submitLeadAction(formData, {
+    cookiesStore: cookieStore,
+    consent,
+    customerId: process.env.GOOGLE_ADS_CUSTOMER_ID,
+    conversionActionId: process.env.GOOGLE_ADS_CONVERSION_ACTION_ID,
+    orderId: lead.id,
+    conversionDateTime: occurredAt,
+    enqueueConversion: request => writeConversionOutbox(request), // host outbox only
+  });
 }
 ```
 
----
+`createLeadInHostDatabase`, `readConsentForLead`, `readLeadOccurredAt`,
+`writeConversionOutbox`, the outbox, and the provider client are placeholders for host code. The repository does not ship them.
+Pass the resulting `handleLeadSubmit` to `<LeadForm onSubmit={handleLeadSubmit} />`; do
+not import the server helper directly into a client component.
 
-## Google Ads API Dispatch Specification
+### 3. Queue and reconcile on the server
 
-The generated payload complies with the Google Ads API v17 `customers.uploadClickConversions` endpoint:
+If `conversionPrepared` is true, the host callback has accepted a candidate into its
+outbox. Use an immutable event ID and a uniqueness key such as
+`destination + action + orderId`. Retry with bounded backoff. Keep provider response,
+CRM state, reversals, and reconciliation status separate from the capture record.
 
-```json
-{
-  "customerId": "1234567890",
-  "conversions": [
-    {
-      "conversionAction": "customers/1234567890/conversionActions/9876543210",
-      "conversionDateTime": "2026-03-31 14:30:00-04:00",
-      "conversionValue": 150.0,
-      "currencyCode": "USD",
-      "orderId": "lead_1774980000000_a1b2c3",
-      "gclid": "CjwKCAjw_pX7BRAkEiwA5SbSOc_mock_google_click_id_987",
-      "userIdentifiers": [
-        {
-          "hashedEmail": "c80521e1a5f4f7fa3235b3e9a7e6b81a0210fdfd058c42a59a22d4f553f19119"
-        },
-        {
-          "hashedPhoneNumber": "b6a7a0b3bfa09bb39659ff8e7b99c8364b4c7188ff6109e99a83850122e2bbfa"
-        }
-      ],
-      "consent": {
-        "adUserData": "GRANTED",
-        "adPersonalization": "GRANTED"
-      }
-    }
-  ],
-  "partialFailure": true
-}
+For a Data Manager integration, replace the provider contract only after the account,
+field mapping, consent requirements, idempotency, and validate-only behaviour have been
+verified with the relevant Google documentation and a sandbox or approved test account.
+
+## Verification
+
+From this directory:
+
+```bash
+npm test
+npm run typecheck
 ```
 
----
-
-## Production Best Practices
-
-1. **Google Consent Mode v2**: In the EEA, ensure `ad_user_data` and `ad_personalization` flags reflect user consent prior to conversion upload.
-2. **Attribution Window**: Google Ads offline click conversions must be uploaded within **90 days** of the click date.
-3. **Enhanced Conversions for Leads**: Always provide normalized, SHA-256 hashed emails and phone numbers. This enables Google to match conversions even when cookie or click ID parameters have been truncated.
-4. **Idempotency**: Set the `orderId` parameter to the unique lead/order reference in your CRM/database to prevent accidental double-counting on retries.
-
----
+The test fixture uses fake IDs and `.test` addresses. It must not be changed to contain
+real customer, CRM, Google, or credential data.
 
 ## License
 

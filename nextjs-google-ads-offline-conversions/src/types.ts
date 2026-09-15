@@ -1,16 +1,34 @@
-/**
- * ClickTrail Google Ads Attribution Types
- */
+/** Synthetic example types. Host applications own consent, identity, and persistence. */
+
+export type ConsentValue = 'UNKNOWN' | 'DENIED' | 'GRANTED';
+
+export interface ConsentSnapshot {
+  advertising: ConsentValue;
+  adUserData: ConsentValue;
+  adPersonalization: ConsentValue;
+  source?: string;
+  policyVersion?: string;
+  capturedAt?: string;
+}
 
 export interface ClickIds {
   gclid?: string;
   gbraid?: string;
   wbraid?: string;
-  capturedAt: string; // ISO 8601 string
+  capturedAt?: string;
+}
+
+export interface AttributionRecord extends ClickIds {
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  utmTerm?: string;
+  utmContent?: string;
+  landingPage?: string;
 }
 
 export interface LeadFormData {
-  fullName: string;
+  fullName?: string;
   email: string;
   phone?: string;
   company?: string;
@@ -21,36 +39,29 @@ export interface LeadFormData {
 export interface UserIdentifier {
   hashedEmail?: string;
   hashedPhoneNumber?: string;
-  addressInfo?: {
-    hashedFirstName?: string;
-    hashedLastName?: string;
-    city?: string;
-    state?: string;
-    postalCode?: string;
-    countryCode?: string;
-  };
 }
 
 export interface GoogleAdsClickConversion {
-  conversionAction: string; // Resource name: customers/{customer_id}/conversionActions/{conversion_action_id}
-  conversionDateTime: string; // Format: yyyy-mm-dd hh:mm:ss+|-hh:mm (e.g. 2026-03-31 14:30:00-04:00)
+  conversionAction: string;
+  conversionDateTime: string;
   conversionValue?: number;
   currencyCode?: string;
-  orderId?: string;
+  orderId: string;
   gclid?: string;
   gbraid?: string;
   wbraid?: string;
   userIdentifiers?: UserIdentifier[];
-  consent?: {
-    adUserData?: 'GRANTED' | 'DENIED';
-    adPersonalization?: 'GRANTED' | 'DENIED';
+  consent: {
+    adUserData: Exclude<ConsentValue, 'UNKNOWN'>;
+    adPersonalization: Exclude<ConsentValue, 'UNKNOWN'>;
   };
 }
 
 export interface GoogleAdsUploadRequest {
   customerId: string;
   conversions: GoogleAdsClickConversion[];
-  partialFailure: boolean;
+  /** Google Ads API only; Data Manager uses a different request contract. */
+  partialFailure: true;
   validateOnly?: boolean;
 }
 
