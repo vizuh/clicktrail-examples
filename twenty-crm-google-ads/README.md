@@ -1,0 +1,3 @@
+# Twenty CRM Google Ads offline conversions
+
+This small, dependency-free reference example targets the search query `twenty crm opportunity stage won Google Ads conversion`. It demonstrates the relevant ClickTrail lifecycle boundary without sending data to a live provider. Replace the final payload handoff with the destination SDK after configuring consent, credentials, and idempotency.

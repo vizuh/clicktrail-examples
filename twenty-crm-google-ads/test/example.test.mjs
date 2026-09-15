@@ -1,0 +1,3 @@
+import test from 'node:test'; import assert from 'node:assert/strict'; import { opportunityToConversion } from '../src/index.mjs';
+test('maps a Twenty won opportunity', () => assert.deepEqual(opportunityToConversion({ id: 'opp_1', stage: 'Won', amount: '99', currency: 'eur', contactId: 'ct_1', customFields: { gclid: 'g' } }), { eventId: 'twenty_opp_1_purchase', eventName: 'Purchase', value: 99, currency: 'EUR', gclid: 'g', gbraid: undefined, wbraid: undefined, customerId: 'ct_1' }));
+test('does not upload non-won opportunities', () => assert.equal(opportunityToConversion({ id: 'opp_2', stage: 'Qualified' }), null));

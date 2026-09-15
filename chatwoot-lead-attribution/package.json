@@ -1,0 +1,11 @@
+{
+  "name": "chatwoot-lead-attribution",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "chatwoot contact custom attributes gclid attribution",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,27 @@
+{
+  "name": "nextjs-google-ads-offline-conversions",
+  "version": "1.0.0",
+  "description": "Next.js App Router reference implementation for capturing GCLID, GBRAID, and WBRAID, persisting to first-party cookies, and uploading offline conversions to Google Ads API.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "google-ads",
+    "offline-conversions",
+    "nextjs",
+    "nextjs-app-router",
+    "gclid",
+    "gbraid",
+    "wbraid",
+    "enhanced-conversions",
+    "clicktrail",
+    "server-actions"
+  ],
+  "author": "ClickTrail Architecture Team",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

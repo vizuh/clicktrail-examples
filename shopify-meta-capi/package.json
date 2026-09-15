@@ -1,0 +1,11 @@
+{
+  "name": "shopify-meta-capi",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "shopify meta capi event_id fbp fbc deduplication",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "MIT"
+}

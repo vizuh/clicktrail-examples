@@ -1,0 +1,27 @@
+{
+  "name": "webhook-to-offline-conversion",
+  "version": "1.0.0",
+  "description": "Standalone Node/TypeScript webhook receiver processing CRM/checkout webhooks and dispatching offline conversions to Google Ads & Meta CAPI with deterministic event_id deduplication.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "node --check src/index.mjs"
+  },
+  "keywords": [
+    "webhook",
+    "offline-conversions",
+    "google-ads-api",
+    "meta-capi",
+    "conversions-api",
+    "event_id",
+    "deduplication",
+    "idempotency",
+    "clicktrail",
+    "stripe-webhook"
+  ],
+  "author": "ClickTrail Architecture Team",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

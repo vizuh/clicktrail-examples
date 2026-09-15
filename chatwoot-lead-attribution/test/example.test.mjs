@@ -1,0 +1,2 @@
+import test from 'node:test'; import assert from 'node:assert/strict'; import { enrichChatwootContact } from '../src/index.mjs';
+test('preserves click IDs in Chatwoot custom attributes', () => { const result = enrichChatwootContact({ id: 4, custom_attributes: { plan: 'pro' } }, { gclid: 'abc', tenantId: 'untrusted' }); assert.deepEqual(result.custom_attributes, { plan: 'pro', clicktrail_gclid: 'abc' }); });

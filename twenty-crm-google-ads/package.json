@@ -1,0 +1,11 @@
+{
+  "name": "twenty-crm-google-ads",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "twenty crm opportunity stage won Google Ads conversion",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "MIT"
+}

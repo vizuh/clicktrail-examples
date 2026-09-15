@@ -1,0 +1,3 @@
+# Chatwoot lead attribution with Google Ads click IDs
+
+This small, dependency-free reference example targets the search query `chatwoot contact custom attributes gclid attribution`. It demonstrates the relevant ClickTrail lifecycle boundary without sending data to a live provider. Replace the final payload handoff with the destination SDK after configuring consent, credentials, and idempotency.
